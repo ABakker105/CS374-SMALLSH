@@ -64,6 +64,19 @@ struct command_line *parse_input()
 	return curr_command;
 }
 
+void reap_background() {
+	int child_status;
+	pid_t reap_pid;
+	while ((reap_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
+		if (WIFEXITED(child_status)) {
+			printf("background pid %d is done: exit value %d\n", reap_pid, WEXITSTATUS(child_status));
+		} else if (WIFSIGNALED(child_status)) {
+			printf("background pid %d is done: terminated by signal %d\n", reap_pid, WTERMSIG(child_status));
+		}
+			fflush(stdout);
+	}
+}
+
 void handle_cd(struct command_line *cmd) {
 	char *target = cmd->argv[1];
 
@@ -88,6 +101,7 @@ int main()
 
 	while(true)
 	{
+		reap_background();
 		curr_command = parse_input();
 
 		if (curr_command == NULL) {
@@ -162,16 +176,6 @@ int main()
 						printf("terminated by signal %d\n", WTERMSIG(child_status));
 						fflush(stdout);
 						last_status = WTERMSIG(child_status);
-					}
-
-					pid_t reap_pid;
-					while ((reap_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
-						if (WIFEXITED(child_status)) {
-							printf("background pid %d is done: exit value %d\n", reap_pid, WEXITSTATUS(child_status));
-						} else if (WIFSIGNALED(child_status)) {
-							printf("background pid %d is done: terminated by signal %d\n", reap_pid, WTERMSIG(child_status));
-						}
-						fflush(stdout);
 					}
 				} else {
 					printf("background pid is %d\n", child_pid);
