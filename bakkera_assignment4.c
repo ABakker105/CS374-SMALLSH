@@ -133,7 +133,7 @@ int main()
 					}
 						close(fd_in);
 				}
-				
+
 				// Output redirection
 				if (curr_command->output_file) {
 					int fd_out = open(curr_command->output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -163,24 +163,21 @@ int main()
 						fflush(stdout);
 						last_status = WTERMSIG(child_status);
 					}
+
+					pid_t reap_pid;
+					while ((reap_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
+						if (WIFEXITED(child_status)) {
+							printf("background pid %d is done: exit value %d\n", reap_pid, WEXITSTATUS(child_status));
+						} else if (WIFSIGNALED(child_status)) {
+							printf("background pid %d is done: terminated by signal %d\n", reap_pid, WTERMSIG(child_status));
+						}
+						fflush(stdout);
+					}
 				} else {
 					printf("background pid is %d\n", child_pid);
 				}
 			}
-		}
-
-		int child_status;
-		pid_t finished_pid;
-
-		while ((finished_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
-			if (WIFEXITED(child_status)) {
-				printf("background pid %d is done: exit value %d\n", finished_pid, WEXITSTATUS(child_status));
-			} else if (WIFSIGNALED(child_status)) {
-				printf("background pid %d is done: terminated by signal %d\n", finished_pid, WTERMSIG(child_status));
-			}
-			fflush(stdout);
-		}
-	
+		}	
 
 		for (int i = 0; i < curr_command->argc; i++) {
 			free(curr_command->argv[i]);
