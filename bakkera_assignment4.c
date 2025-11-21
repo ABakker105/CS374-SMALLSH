@@ -12,11 +12,13 @@
 #include <sys/types.h> // pid_t
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #define INPUT_LENGTH 2048
 #define MAX_ARGS	512
 
 int last_status = 0;
+int fg_only_mode = 0;
 
 struct command_line
 {
@@ -55,13 +57,43 @@ struct command_line *parse_input()
 		} else if(!strcmp(token,">")){
 			curr_command->output_file = strdup(strtok(NULL," \n"));
 		} else if(!strcmp(token,"&")){
-			curr_command->is_bg = true;
+			if (fg_only_mode == 0) {
+				curr_command->is_bg = true;
+			}
 		} else{
 			curr_command->argv[curr_command->argc++] = strdup(token);
 		}
 		token=strtok(NULL," \n");
 	}
 	return curr_command;
+}
+
+void handle_SIGTSTP(int signo) {
+	(void)signo;
+	const char msg_on[] = "Entering foreground-only mode (& is now ignored)\n";
+	const char msg_off[] = "Exiting foreground-only mode\n";
+
+	if (fg_only_mode == 0) {
+		fg_only_mode = 1;
+		write(STDOUT_FILENO, msg_on, sizeof(msg_on) - 1);
+	} else {
+		fg_only_mode = 0;
+		write(STDOUT_FILENO, msg_off, sizeof(msg_off) - 1);
+	}
+}
+
+void setup_parent_signals(void) {
+	// Initialize SIGINT_action struct to be empty
+	struct sigaction SIGINT_action = {0};
+	SIGINT_action.sa_handler = SIG_IGN;
+	sigfillset(&SIGINT_action.sa_mask);
+	sigaction(SIGINT, &SIGINT_action, NULL);
+
+	struct sigaction SIGTSTP_action = {0};
+	SIGTSTP_action.sa_handler = handle_SIGTSTP;
+	sigfillset(&SIGTSTP_action.sa_mask);
+	SIGTSTP_action.sa_flags = SA_RESTART;
+	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 }
 
 void reap_background() {
@@ -92,11 +124,17 @@ void handle_cd(struct command_line *cmd) {
 }
 
 void handle_status() {
-	printf("exit value %d\n", last_status);
+	if (WIFEXITED(last_status)) {
+		printf("exit value %d\n", WEXITSTATUS(last_status));
+	} else if (WIFSIGNALED(last_status)) {
+		printf("terminated by signal %d\n", WTERMSIG(last_status));
+	}
+	fflush(stdout);
 }
 
 int main()
 {
+	setup_parent_signals();
 	struct command_line *curr_command;
 
 	while(true)
@@ -122,6 +160,19 @@ int main()
 				perror("fork");
 				last_status = 1;
 			} else if (child_pid == 0) {	
+				struct sigaction SIGTSTP_action = {0};
+				SIGTSTP_action.sa_handler = SIG_IGN;
+				sigaction(SIGTSTP, &SIGTSTP_action, NULL);
+
+				struct sigaction SIGINT_action = {0};
+				if (curr_command->is_bg) {
+					SIGINT_action.sa_handler = SIG_IGN;
+				} else {
+					SIGINT_action.sa_handler = SIG_DFL;
+				} 
+
+				sigaction(SIGINT, &SIGINT_action, NULL);
+
 				if (curr_command->is_bg) {
 					if (!curr_command->input_file) {
 						int fd_in = open("/dev/null", O_RDONLY);
@@ -161,7 +212,7 @@ int main()
 					close(fd_out);
 				}
 					execvp(curr_command->argv[0], curr_command->argv);
-					perror("execvp");
+					fprintf(stderr, "%s: no such file or directory\n", curr_command->argv[0]);
 					exit(1);
 			} else {
 				// Parent process
@@ -170,15 +221,14 @@ int main()
 					int child_status;
 					waitpid(child_pid, &child_status, 0);
 					
-					if (WIFEXITED(child_status)) {
-						last_status = WEXITSTATUS(child_status);
-					} else if (WIFSIGNALED(child_status)) {
+					last_status = child_status;
+					if (WIFSIGNALED(child_status)) {
 						printf("terminated by signal %d\n", WTERMSIG(child_status));
 						fflush(stdout);
-						last_status = WTERMSIG(child_status);
 					}
 				} else {
-					printf("background pid is %d\n", child_pid);
+						printf("background pid is %d\n", child_pid);
+						fflush(stdout);
 				}
 			}
 		}	
