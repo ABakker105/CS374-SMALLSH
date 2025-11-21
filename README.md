@@ -45,7 +45,7 @@
 ### - Any line that begins with the # character is a comment line and must be ignored. Mid-line comments, such as the C-style //, will not be supported.
 ### - A blank line (one without any commands) must also do nothing.
 ### - Your shell must just re-prompt for another command when it receives either a blank line or a comment line.
-## 3. Built-in Commands
+# 3. Built-in Commands
 ### - Your shell will support three built-in commands: exit, cd, and status. These three built-in commands are the only ones that your shell will handle itself - all others are simply passed on to a member of the exec() family of functions.
 
 ### - You do not have to support input/output redirection for these built in commands
