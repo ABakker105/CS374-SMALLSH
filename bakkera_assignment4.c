@@ -1,15 +1,20 @@
-/**
- * A sample program for parsing a command line. If you find it useful,
- * feel free to adapt this code for Assignment 4.
- * Do fix memory leaks and any additional issues you find.
- */
+/*
+    Program Name: bakkera_assignment4.c
+    Author: Allessandra Bakker
+    Email: bakkera@oregonstate.edu
+
+    Description: For this assignment, I wrote my own shell in C called smallsh. My program provides a prompt for 
+	running commands, handles blank lines and comments, executes 3 commands (exit, cd, and status) via code built into the shell, 
+	executes other commands by creating new processes using a function from the exec() family of functions, 
+	supports input and output redirection, supports running commands in foreground and background processes, and implements custom handlers for 2 signals, SIGINT and SIGTSTP.
+*/
 
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <sys/types.h> // pid_t
+#include <sys/types.h> 
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -20,6 +25,15 @@
 int last_status = 0;
 int fg_only_mode = 0;
 
+/*
+	Struct: command_line
+
+	argv - Argument list (NULL-terminated)
+	argc - Number of arguments
+	input_file - Filename after "<" or NULL
+	output_file - Filename after ">" or NULL
+	is_bg - True if command ends with "&"
+*/
 struct command_line
 {
 	char *argv[MAX_ARGS + 1];
@@ -29,7 +43,34 @@ struct command_line
 	bool is_bg;
 };
 
+/*
+	Function: free_command
 
+	Description: Frees memory to prevent memory leaks
+*/
+void free_command(struct command_line *cmd) {
+	if (cmd == NULL) {
+		return;
+	}
+
+	for (int i = 0; i < cmd->argc; i++) {
+		free(cmd->argv[i]);
+	}
+		free(cmd->input_file);
+		free(cmd->output_file);
+		free(cmd);
+}
+
+/*
+	Function: parse_input
+
+	Description: Reads a line of input from the user, parses it into tokens, and constructs a command_line struct 
+	describing the command. 
+
+	Returns: 
+		- Pointer to a dynamically allocated commmand_line struct representing the parsed command
+		- NULL if the line is empty or a comment
+*/
 struct command_line *parse_input()
 {
 	char input[INPUT_LENGTH];
@@ -45,7 +86,7 @@ struct command_line *parse_input()
 		trimmed++;
 	}
 		if (*trimmed == '\n' || *trimmed == '\0' || *trimmed == '#') {
-			free(curr_command);
+			free_command(curr_command);
 			return NULL;
 	}
 
@@ -68,6 +109,16 @@ struct command_line *parse_input()
 	return curr_command;
 }
 
+/* 
+	Function: handle_SIGTSTP
+
+	Parameter(s): 
+		- signo: the signal number
+
+	Description: Signal handler for SIGTSTP. This function toggles the shell's 
+	"foreground-only mode." when foreground-only mode is enabled, any command ending with 
+	"&" is ignored and run in the foreground instead. 
+*/
 void handle_SIGTSTP(int signo) {
 	(void)signo;
 	const char msg_on[] = "Entering foreground-only mode (& is now ignored)\n";
@@ -82,33 +133,57 @@ void handle_SIGTSTP(int signo) {
 	}
 }
 
-void setup_parent_signals(void) {
+/*
+	Function: setup_parent_signals
+
+	Description: 
+		- SIGINT is ignored so the shell itself is not killed
+		- SIGTSTP uses handle _SIGTSTP() to toggle foreground-only mode.
+
+*/
+void setup_parent_signals() {
 	// Initialize SIGINT_action struct to be empty
 	struct sigaction SIGINT_action = {0};
+	// Ignores SIGINT in the shell
 	SIGINT_action.sa_handler = SIG_IGN;
+	// Blocks all signals during handler
 	sigfillset(&SIGINT_action.sa_mask);
 	sigaction(SIGINT, &SIGINT_action, NULL);
 
 	struct sigaction SIGTSTP_action = {0};
 	SIGTSTP_action.sa_handler = handle_SIGTSTP;
+	// Blocks all signals during handler
 	sigfillset(&SIGTSTP_action.sa_mask);
-	SIGTSTP_action.sa_flags = SA_RESTART;
 	sigaction(SIGTSTP, &SIGTSTP_action, NULL);
 }
 
+/*
+	Function: reap_background
+
+	Description: Checks for any completed background child processes without blocking.
+*/
 void reap_background() {
 	int child_status;
 	pid_t reap_pid;
+
+	// Loops through all child processes that have finished.
 	while ((reap_pid = waitpid(-1, &child_status, WNOHANG)) > 0) {
 		if (WIFEXITED(child_status)) {
+			// Background child process ended normally with an exit value.
 			printf("background pid %d is done: exit value %d\n", reap_pid, WEXITSTATUS(child_status));
 		} else if (WIFSIGNALED(child_status)) {
+			// Background child process was terminated by a signal.
 			printf("background pid %d is done: terminated by signal %d\n", reap_pid, WTERMSIG(child_status));
 		}
 			fflush(stdout);
 	}
 }
 
+/*
+	Function: handle_cd
+
+	Description: Implements the built-in "cd" command for the shell.
+*/
 void handle_cd(struct command_line *cmd) {
 	char *target = cmd->argv[1];
 
@@ -123,15 +198,28 @@ void handle_cd(struct command_line *cmd) {
 	}
 }
 
+/*
+	Function: handle_status
+
+	Description: Implements the built_in "status" command for the shell.
+*/
 void handle_status() {
+	// Checks if the foreground process exited normally.
 	if (WIFEXITED(last_status)) {
 		printf("exit value %d\n", WEXITSTATUS(last_status));
+	// Checks if the process was terminated by a signal.
 	} else if (WIFSIGNALED(last_status)) {
 		printf("terminated by signal %d\n", WTERMSIG(last_status));
 	}
 	fflush(stdout);
 }
 
+/* 
+	Function: main
+
+	Description: Runs the shell by setting up signals, reading user input, handling built-in commands, 
+	and forking child processes to execute non-built-in commands with support for redirection and background jobs.
+*/
 int main()
 {
 	setup_parent_signals();
@@ -145,21 +233,25 @@ int main()
 		if (curr_command == NULL) {
 			continue;
 		}
-
+		// Checks if command entered is "exit" and exits the program if that's the case
 		if (strcmp(curr_command->argv[0], "exit") == 0) {
-			free(curr_command);
+			free_command(curr_command);
 			exit(0);
+		// Checks if the command entered is "cd" and changes the directory if that's the case
 		} else if (strcmp(curr_command->argv[0], "cd") == 0) {
 			handle_cd(curr_command);
+		// Checks if the command entered is "status" and prints the status if that's the case
 		} else if (strcmp(curr_command->argv[0], "status") == 0) {
 			handle_status();
 		} else {
-			// Non built-in commands 
+			// Forks a child process for non built-in commands 
 			pid_t child_pid = fork();
+			
 			if (child_pid == -1) {
 				perror("fork");
 				last_status = 1;
-			} else if (child_pid == 0) {	
+			} else if (child_pid == 0) {
+				// Child process	
 				struct sigaction SIGTSTP_action = {0};
 				SIGTSTP_action.sa_handler = SIG_IGN;
 				sigaction(SIGTSTP, &SIGTSTP_action, NULL);
@@ -174,19 +266,22 @@ int main()
 				sigaction(SIGINT, &SIGINT_action, NULL);
 
 				if (curr_command->is_bg) {
+					// Background command uses /dev/null for input only when input redirection isn't specified in command.
 					if (!curr_command->input_file) {
 						int fd_in = open("/dev/null", O_RDONLY);
 						dup2(fd_in, 0);
 						close(fd_in);
 					} 
 					
+					// Background command uses /dev/null for output only when output redirection isn't specified in command.
 					if (!curr_command->output_file) {
 						int fd_out = open("/dev/null", O_WRONLY);
 						dup2(fd_out, 1);
 						close(fd_out);
 					}
 				}
-				// Input redirection
+
+				// Handles input redirection
 				if (curr_command->input_file) {
 					int fd_in = open(curr_command->input_file, O_RDONLY);
 					if (fd_in == -1) {
@@ -199,7 +294,7 @@ int main()
 						close(fd_in);
 				}
 
-				// Output redirection
+				// Handles output redirection
 				if (curr_command->output_file) {
 					int fd_out = open(curr_command->output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 					if (fd_out == -1) {
@@ -232,14 +327,7 @@ int main()
 				}
 			}
 		}	
-
-		for (int i = 0; i < curr_command->argc; i++) {
-			free(curr_command->argv[i]);
-		}
-		free(curr_command->input_file);
-		free(curr_command->output_file);
-		free(curr_command);
-
+		free_command(curr_command);
 	}
 	return EXIT_SUCCESS;
 }
